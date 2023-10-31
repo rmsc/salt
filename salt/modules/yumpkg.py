@@ -735,47 +735,13 @@ def list_pkgs(versions_as_list=False, **kwargs):
         return {}
 
     attr = kwargs.get("attr")
-    if attr is not None and attr != "all":
-        attr = salt.utils.args.split_input(attr)
 
     contextkey = "pkg.list_pkgs"
 
     if contextkey in __context__ and kwargs.get("use_context", True):
         return _list_pkgs_from_context(versions_as_list, contextkey, attr)
 
-    ret = {}
-    cmd = [
-        "rpm",
-        "-qa",
-        "--nodigest",
-        "--nosignature",
-        "--queryformat",
-        salt.utils.pkg.rpm.QUERYFORMAT.replace("%{REPOID}", "(none)") + "\n",
-    ]
-    output = __salt__["cmd.run"](cmd, python_shell=False, output_loglevel="trace")
-    for line in output.splitlines():
-        pkginfo = salt.utils.pkg.rpm.parse_pkginfo(line, osarch=__grains__["osarch"])
-        if pkginfo is not None:
-            # see rpm version string rules available at https://goo.gl/UGKPNd
-            pkgver = pkginfo.version
-            epoch = None
-            release = None
-            if ":" in pkgver:
-                epoch, pkgver = pkgver.split(":", 1)
-            if "-" in pkgver:
-                pkgver, release = pkgver.split("-", 1)
-            all_attr = {
-                "epoch": epoch,
-                "version": pkgver,
-                "release": release,
-                "arch": pkginfo.arch,
-                "install_date": pkginfo.install_date,
-                "install_date_time_t": pkginfo.install_date_time_t,
-            }
-            __salt__["pkg_resource.add_pkg"](ret, pkginfo.name, all_attr)
-
-    for pkgname in ret:
-        ret[pkgname] = sorted(ret[pkgname], key=lambda d: d["version"])
+    ret = salt.utils.pkg.rpm.list_pkgs(attr=attr)
 
     __context__[contextkey] = ret
 

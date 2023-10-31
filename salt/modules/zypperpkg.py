@@ -910,8 +910,6 @@ def list_pkgs(versions_as_list=False, root=None, includes=None, **kwargs):
         return {}
 
     attr = kwargs.get("attr")
-    if attr is not None and attr != "all":
-        attr = salt.utils.args.split_input(attr)
 
     includes = includes if includes else []
 
@@ -922,52 +920,14 @@ def list_pkgs(versions_as_list=False, root=None, includes=None, **kwargs):
     if contextkey in __context__ and kwargs.get("use_context", True):
         return _list_pkgs_from_context(versions_as_list, contextkey, attr)
 
-    ret = {}
-    cmd = ["rpm"]
-    if root:
-        cmd.extend(["--root", root])
-    cmd.extend(
-        [
-            "-qa",
-            "--queryformat",
-            salt.utils.pkg.rpm.QUERYFORMAT.replace("%{REPOID}", "(none)") + "\n",
-        ]
-    )
-    output = __salt__["cmd.run"](cmd, python_shell=False, output_loglevel="trace")
-    for line in output.splitlines():
-        pkginfo = salt.utils.pkg.rpm.parse_pkginfo(line, osarch=__grains__["osarch"])
-        if pkginfo:
-            # see rpm version string rules available at https://goo.gl/UGKPNd
-            pkgver = pkginfo.version
-            epoch = None
-            release = None
-            if ":" in pkgver:
-                epoch, pkgver = pkgver.split(":", 1)
-            if "-" in pkgver:
-                pkgver, release = pkgver.split("-", 1)
-            all_attr = {
-                "epoch": epoch,
-                "version": pkgver,
-                "release": release,
-                "arch": pkginfo.arch,
-                "install_date": pkginfo.install_date,
-                "install_date_time_t": pkginfo.install_date_time_t,
-            }
-            __salt__["pkg_resource.add_pkg"](ret, pkginfo.name, all_attr)
-
-    _ret = {}
-    for pkgname in ret:
-        # Filter out GPG public keys packages
-        if pkgname.startswith("gpg-pubkey"):
-            continue
-        _ret[pkgname] = sorted(ret[pkgname], key=lambda d: d["version"])
+    ret = salt.utils.pkg.rpm.list_pkgs(root=root, attr=attr)
 
     for include in includes:
         if include == "product":
             products = list_products(all=False, root=root)
             for product in products:
                 extended_name = "{}:{}".format(include, product["name"])
-                _ret[extended_name] = [
+                ret[extended_name] = [
                     {
                         "epoch": product["epoch"],
                         "version": product["version"],
@@ -987,7 +947,7 @@ def list_pkgs(versions_as_list=False, root=None, includes=None, **kwargs):
             for element in elements:
                 extended_name = f"{include}:{element}"
                 info = info_available(extended_name, refresh=False, root=root)
-                _ret[extended_name] = [
+                ret[extended_name] = [
                     {
                         "epoch": None,
                         "version": info[element]["version"],
@@ -998,7 +958,7 @@ def list_pkgs(versions_as_list=False, root=None, includes=None, **kwargs):
                     }
                 ]
 
-    __context__[contextkey] = _ret
+    __context__[contextkey] = ret
 
     return __salt__["pkg_resource.format_pkg_list"](
         __context__[contextkey], versions_as_list, attr

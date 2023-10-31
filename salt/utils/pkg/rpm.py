@@ -7,6 +7,9 @@ import logging
 import platform
 import subprocess
 
+import salt.modules.cmdmod
+import salt.modules.grains
+import salt.modules.pkg_resource
 import salt.utils.path
 import salt.utils.stringutils
 
@@ -105,7 +108,7 @@ def resolve_name(name, arch, osarch=None):
         osarch = get_osarch()
 
     if not check_32(arch, osarch) and arch not in (osarch, "noarch"):
-        name += ".{}".format(arch)
+        name += f".{arch}"
     return name
 
 
@@ -123,7 +126,7 @@ def parse_pkginfo(line, osarch=None):
 
     name = resolve_name(name, arch, osarch)
     if release:
-        version += "-{}".format(release)
+        version += f"-{release}"
     if epoch not in ("(none)", "0"):
         version = ":".join((epoch, version))
 
@@ -189,3 +192,71 @@ def version_to_evr(verstring):
         release = ""
 
     return epoch, version, release
+
+
+def list_pkgs(root=None, attr=None):
+    """
+    List the packages currently installed as a dict. By default, the dict
+    contains versions as a comma separated string::
+
+        {'<package_name>': '<version>[,<version>...]'}
+
+    root:
+        operate on a different root directory.
+
+    attr:
+        If a list of package attributes is specified, returned value will
+        contain them in addition to version, eg.::
+
+        {'<package_name>': [{'version' : 'version', 'arch' : 'arch'}]}
+
+        Valid attributes are: ``epoch``, ``version``, ``release``, ``arch``,
+        ``install_date``, ``install_date_time_t``.
+
+        If ``all`` is specified, all valid attributes will be returned.
+    """
+
+    if attr is not None and attr != "all":
+        attr = salt.utils.args.split_input(attr)
+
+    ret = {}
+    cmd = [
+        "rpm",
+        "-qa",
+        "--nodigest",
+        "--nosignature",
+        "--queryformat",
+        QUERYFORMAT.replace("%{REPOID}", "(none)") + "\n",
+    ]
+    if root:
+        cmd.extend(["--root", root])
+    output = salt.modules.cmdmod.run(cmd, output_loglevel="trace")
+    for line in output.splitlines():
+        pkginfo = parse_pkginfo(line, osarch=salt.modules.grains.get("osarch"))
+        if pkginfo:
+            # see rpm version string rules available at https://goo.gl/UGKPNd
+            pkgver = pkginfo.version
+            epoch = None
+            release = None
+            if ":" in pkgver:
+                epoch, pkgver = pkgver.split(":", 1)
+            if "-" in pkgver:
+                pkgver, release = pkgver.split("-", 1)
+            all_attr = {
+                "epoch": epoch,
+                "version": pkgver,
+                "release": release,
+                "arch": pkginfo.arch,
+                "install_date": pkginfo.install_date,
+                "install_date_time_t": pkginfo.install_date_time_t,
+            }
+            salt.modules.pkg_resource.add_pkg(ret, pkginfo.name, all_attr)
+
+    _ret = {}
+    for pkgname in ret:
+        # Filter out GPG public keys packages
+        if pkgname.startswith("gpg-pubkey"):
+            continue
+        _ret[pkgname] = sorted(ret[pkgname], key=lambda d: d["version"])
+
+    return _ret
